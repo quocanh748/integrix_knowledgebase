@@ -1,1 +1,101 @@
-/*.md
+# ==========================================
+# Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ==========================================
+# Môi trường ảo (Virtual Environments)
+# ==========================================
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ==========================================
+# Cấu hình bí mật & Biến môi trường
+# ==========================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# Cho phép commit file mẫu cấu hình
+!.env.example
+
+# ==========================================
+# Vector Cache & Mô hình AI / Weights (Dung lượng lớn)
+# ==========================================
+*.npz
+*.npy
+*.pt
+*.pth
+*.bin
+*.onnx
+*.safetensors
+cached_embeddings.npz
+.cache/
+huggingface/
+
+# ==========================================
+# Cơ sở dữ liệu & Docker Volumes
+# ==========================================
+*.sql
+*.sqlite3
+*.db
+pgdata/
+pgvector_data/
+
+# ==========================================
+# Nhật ký (Logs)
+# ==========================================
+*.log
+logs/
+
+# ==========================================
+# IDE & Trình soạn thảo
+# ==========================================
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ==========================================
+# Hệ điều hành (OS generated)
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
