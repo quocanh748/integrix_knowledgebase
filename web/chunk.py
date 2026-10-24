@@ -30,6 +30,7 @@ class MarkdownChunk:
     doc_title: str
     section_title: str
     content: str
+    status: str = "active"
 
     @property
     def char_count(self) -> int:
@@ -49,6 +50,7 @@ class MarkdownChunk:
                 "lang": lang,
                 "source": "integrix_web",
                 "file_stem": stem,
+                "status": self.status,
             },
         }
 
@@ -62,10 +64,11 @@ def chunk_by_h2(
     text: str,
     file_name: str = "",
     default_title: str = "Tài liệu không có tiêu đề",
+    status: str = "active",
 ) -> Tuple[str, List[MarkdownChunk]]:
     """
-    Chia nhỏ Markdown theo H2 (##):
-    1. Trích xuất H1 (#) đầu tiên làm tiêu đề tài liệu (metadata).
+    Chia nhỏ Markdown theo ##:
+    1. Trích xuất # đầu tiên làm tiêu đề metadata.
     2. Đoạn mở đầu trước H2 đầu tiên tạo thành chunk 'Tổng quan / Overview'.
     3. Mỗi khối H2 tạo một chunk độc lập (tự động gộp các H2 rỗng liên tiếp).
     """
@@ -90,7 +93,7 @@ def chunk_by_h2(
     chunk_idx = 1
 
     if intro := parts[0].strip():
-        chunks.append(MarkdownChunk(chunk_idx, file_name, doc_title, "Tổng quan / Overview", intro))
+        chunks.append(MarkdownChunk(chunk_idx, file_name, doc_title, "Tổng quan / Overview", intro, status=status))
         chunk_idx += 1
 
     titles, raw_headings = [], []
@@ -107,7 +110,7 @@ def chunk_by_h2(
 
         title = " - ".join(titles)
         content = "\n".join(raw_headings) + (f"\n\n{body}" if body else "")
-        chunks.append(MarkdownChunk(chunk_idx, file_name, doc_title, title, content))
+        chunks.append(MarkdownChunk(chunk_idx, file_name, doc_title, title, content, status=status))
         chunk_idx += 1
         titles, raw_headings = [], []
 
@@ -132,7 +135,7 @@ def resolve_file(file_arg: str) -> Path:
     return p
 
 
-def chunk_directory(target_dir: str = "integrix_docs") -> List[dict]:
+def chunk_directory(target_dir: str = "integrix_docs", default_status: str = "active") -> List[dict]:
     """Quét và chia nhỏ toàn bộ file Markdown trong thư mục thành danh sách dictionary."""
     root = Path(target_dir).resolve()
     if not root.is_dir():
@@ -145,7 +148,7 @@ def chunk_directory(target_dir: str = "integrix_docs") -> List[dict]:
 
     md_files = sorted(root.glob("*.md"))
     all_chunks = []
-    print(f"[*] Đang quét và chia nhỏ {len(md_files)} file Markdown trong '{root.name}'...")
+    print(f"[*] Đang quét và chia nhỏ {len(md_files)} file Markdown trong '{root.name}' (status: {default_status})...")
 
     for p in md_files:
         try:
@@ -153,7 +156,7 @@ def chunk_directory(target_dir: str = "integrix_docs") -> List[dict]:
         except Exception:
             content = p.read_text(encoding="utf-8-sig", errors="ignore")
 
-        doc_title, chunks = chunk_by_h2(content, file_name=p.name, default_title=p.stem)
+        doc_title, chunks = chunk_by_h2(content, file_name=p.name, default_title=p.stem, status=default_status)
         for c in chunks:
             all_chunks.append(c.to_dict())
 
@@ -186,11 +189,17 @@ def main() -> None:
         default="chunks.json",
         help="Đường dẫn file JSON xuất ra khi dùng --all (mặc định: 'chunks.json')",
     )
+    parser.add_argument(
+        "--status", "-s",
+        default="active",
+        choices=["active", "archived", "draft"],
+        help="Trạng thái hiệu lực của tài liệu ('active', 'archived', 'draft') (mặc định: 'active')",
+    )
     args = parser.parse_args()
 
     # Chế độ 1: Xuất hàng loạt ra JSON
     if args.all:
-        chunks_data = chunk_directory(args.dir)
+        chunks_data = chunk_directory(args.dir, default_status=args.status)
         if not chunks_data:
             return
 
@@ -211,17 +220,17 @@ def main() -> None:
         return
 
     content = file_path.read_text(encoding="utf-8")
-    doc_title, chunks = chunk_by_h2(content, file_name=file_path.name, default_title=file_path.stem)
+    doc_title, chunks = chunk_by_h2(content, file_name=file_path.name, default_title=file_path.stem, status=args.status)
 
     print("=" * 80)
     print(f"📄 TẬP TIN       : {file_path.name}")
     print(f"📌 TIÊU ĐỀ (#)   : {doc_title}")
-    print(f"📊 TỔNG DUNG LƯỢNG: {len(content):,} ký tự | SỐ LƯỢNG CHUNK: {len(chunks)}")
+    print(f"📊 TỔNG DUNG LƯỢNG: {len(content):,} ký tự | SỐ LƯỢNG CHUNK: {len(chunks)} | TRẠNG THÁI: {args.status}")
     print("=" * 80)
 
     for chunk in chunks:
         print(f"\n--- [CHUNK {chunk.chunk_index}/{len(chunks)}] ({chunk.char_count} ký tự) ---")
-        print(f"[METADATA]\n  • Tập tin           : {chunk.file_name}\n  • Doc Title     (#) : {chunk.doc_title}\n  • Section Title (##): {chunk.section_title}")
+        print(f"[METADATA]\n  • Tập tin           : {chunk.file_name}\n  • Doc Title     (#) : {chunk.doc_title}\n  • Section Title (##): {chunk.section_title}\n  • Trạng thái        : {chunk.status}")
         print(f"[NỘI DUNG]\n{chunk.content}\n{'-' * 80}")
 
     print(f"\n Hoàn tất hiển thị {len(chunks)} chunks của file '{file_path.name}'.\n")

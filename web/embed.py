@@ -111,6 +111,12 @@ def init_database_schema(conn, vector_dim: int = 1024) -> None:
         CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding
         ON document_chunks USING hnsw (embedding vector_cosine_ops);
         """)
+
+        # 4. Tạo chỉ mục B-tree trên metadata->>'status' để tối ưu bộ lọc hiệu lực
+        cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_chunks_metadata_status
+        ON document_chunks ((metadata->>'status'));
+        """)
     print("[+] Cơ sở dữ liệu và bảng 'document_chunks' đã được khởi tạo chuẩn hóa.")
 
 
@@ -177,20 +183,26 @@ def search_similar_chunks(
     conn,
     top_k: int = 5,
     lang_filter: Optional[str] = None,
+    status_filter: Optional[str] = "active",
 ) -> None:
     """Tìm kiếm các chunk có độ tương đồng ngữ nghĩa cao nhất bằng khoảng cách Cosine (<=>)."""
-    print(f"\n🔍 Truy vấn: \"{query}\"")
+    print(f"\n🔍 Truy vấn: \"{query}\" (status={status_filter or 'all'})")
     query_vector = model.encode([query], normalize_embeddings=True)[0]
 
     sql = """
     SELECT id, file_name, doc_title, section_title, content, metadata,
            1 - (embedding <=> %s) AS similarity
     FROM document_chunks
+    WHERE 1=1
     """
     params = [query_vector]
 
+    if status_filter and status_filter.lower() != "all":
+        sql += " AND (metadata->>'status') = %s "
+        params.append(status_filter)
+
     if lang_filter:
-        sql += " WHERE metadata->>'lang' = %s "
+        sql += " AND metadata->>'lang' = %s "
         params.append(lang_filter)
 
     sql += " ORDER BY embedding <=> %s LIMIT %s;"
@@ -206,7 +218,8 @@ def search_similar_chunks(
 
     print("=" * 80)
     for rank, (cid, fname, doc_title, sec_title, content, meta, sim) in enumerate(rows, 1):
-        print(f"Top {rank} | Độ tương đồng: {sim * 100:.2f}% | ID: {cid} | File: {fname}")
+        status_tag = meta.get("status", "unknown") if isinstance(meta, dict) else "unknown"
+        print(f"Top {rank} | Độ tương đồng: {sim * 100:.2f}% | ID: {cid} | File: {fname} | Trạng thái: {status_tag}")
         print(f"  📌 Tiêu đề: {doc_title} -> {sec_title}")
         print(f"  📄 Nội dung chi tiết:\n{content.strip()}")
         print("-" * 80)
@@ -275,6 +288,12 @@ def main() -> None:
         choices=["vi", "en"],
         help="Lọc ngôn ngữ khi tìm kiếm ('vi' hoặc 'en')",
     )
+    parser.add_argument(
+        "--status",
+        default="active",
+        choices=["active", "archived", "draft", "all"],
+        help="Lọc trạng thái hiệu lực khi tìm kiếm ('active', 'archived', 'draft', 'all') (mặc định: 'active')",
+    )
 
     args = parser.parse_args()
 
@@ -307,7 +326,7 @@ def main() -> None:
         if not conn:
             print("[LỖI] Không thể tìm kiếm vì chưa kết nối được cơ sở dữ liệu PostgreSQL.")
             return
-        search_similar_chunks(args.query, model, conn, top_k=args.top_k, lang_filter=args.lang)
+        search_similar_chunks(args.query, model, conn, top_k=args.top_k, lang_filter=args.lang, status_filter=args.status)
         conn.close()
         return
 

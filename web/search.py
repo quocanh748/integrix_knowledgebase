@@ -123,18 +123,29 @@ class HybridSearchEngine:
         self.model.max_seq_length = 2048
         print(f"[+] Hệ thống Hybrid Search đã sẵn sàng hoạt động!\n")
 
-    def dense_search(self, query: str, top_k: int, lang_filter: Optional[str] = None) -> List[Tuple[str, int, float]]:
+    def dense_search(
+        self,
+        query: str,
+        top_k: int,
+        lang_filter: Optional[str] = None,
+        status_filter: Optional[str] = "active",
+    ) -> List[Tuple[str, int, float]]:
         """Dense Search: Tìm kiếm ngữ nghĩa bằng vector embedding trong PGVector."""
         query_vector = self.model.encode([query], normalize_embeddings=True)[0]
 
         sql = """
         SELECT id, 1 - (embedding <=> %s) AS similarity
         FROM document_chunks
+        WHERE 1=1
         """
         params = [query_vector]
 
+        if status_filter and status_filter.lower() != "all":
+            sql += " AND (metadata->>'status') = %s "
+            params.append(status_filter)
+
         if lang_filter:
-            sql += " WHERE metadata->>'lang' = %s "
+            sql += " AND metadata->>'lang' = %s "
             params.append(lang_filter)
 
         sql += " ORDER BY embedding <=> %s LIMIT %s;"
@@ -146,7 +157,13 @@ class HybridSearchEngine:
 
         return [(row[0], rank, float(row[1])) for rank, row in enumerate(rows, 1)]
 
-    def sparse_search(self, query: str, top_k: int, lang_filter: Optional[str] = None) -> List[Tuple[str, int, float]]:
+    def sparse_search(
+        self,
+        query: str,
+        top_k: int,
+        lang_filter: Optional[str] = None,
+        status_filter: Optional[str] = "active",
+    ) -> List[Tuple[str, int, float]]:
         """Sparse Search: Khớp từ khóa chính xác bằng thuật toán BM25."""
         query_tokens = tokenize(query)
         if not query_tokens:
@@ -157,7 +174,10 @@ class HybridSearchEngine:
 
         for idx, score in enumerate(scores):
             cid = self.doc_ids[idx]
-            if lang_filter and self.doc_store[cid]["metadata"].get("lang") != lang_filter:
+            meta = self.doc_store[cid].get("metadata", {})
+            if status_filter and status_filter.lower() != "all" and meta.get("status") != status_filter:
+                continue
+            if lang_filter and meta.get("lang") != lang_filter:
                 continue
             if score > 0:
                 scored_docs.append((cid, float(score)))
@@ -171,6 +191,7 @@ class HybridSearchEngine:
         query: str,
         top_k: int = DEFAULT_TOP_K,
         lang_filter: Optional[str] = None,
+        status_filter: Optional[str] = "active",
     ) -> List[SearchResult]:
         """
         Thực thi Hybrid Search theo đúng kiến trúc:
@@ -179,8 +200,8 @@ class HybridSearchEngine:
         3. Trả về top-k chunks có điểm RRF cao nhất.
         """
         # Lấy top ứng viên từ mỗi bảng xếp hạng
-        dense_results = self.dense_search(query, top_k=self.candidate_k, lang_filter=lang_filter)
-        sparse_results = self.sparse_search(query, top_k=self.candidate_k, lang_filter=lang_filter)
+        dense_results = self.dense_search(query, top_k=self.candidate_k, lang_filter=lang_filter, status_filter=status_filter)
+        sparse_results = self.sparse_search(query, top_k=self.candidate_k, lang_filter=lang_filter, status_filter=status_filter)
 
         dense_map = {cid: (rank, score) for cid, rank, score in dense_results}
         sparse_map = {cid: (rank, score) for cid, rank, score in sparse_results}
@@ -236,8 +257,9 @@ def display_results(results: List[SearchResult], mode: str = "hybrid") -> None:
     for rank, res in enumerate(results, 1):
         dense_info = f"#{res.dense_rank} ({res.dense_score*100:.1f}%)" if res.dense_rank else "Không có"
         sparse_info = f"#{res.sparse_rank} (điểm={res.sparse_score:.2f})" if res.sparse_rank else "Không có"
+        status_tag = res.metadata.get("status", "unknown") if isinstance(res.metadata, dict) else "unknown"
 
-        print(f"Top {rank} | RRF Score: {res.rrf_score:.5f} | ID: {res.id} | File: {res.file_name}")
+        print(f"Top {rank} | RRF Score: {res.rrf_score:.5f} | ID: {res.id} | File: {res.file_name} | Trạng thái: {status_tag}")
         print(f"  📊 Xếp hạng thành phần: Vector Rank: {dense_info} | BM25 Rank: {sparse_info}")
         print(f"  📌 Tiêu đề: {res.doc_title} -> {res.section_title}")
         print(f"  📄 Nội dung chi tiết:\n{res.content.strip()}")
@@ -272,6 +294,12 @@ def main() -> None:
         help="Lọc kết quả theo ngôn ngữ ('vi' hoặc 'en')",
     )
     parser.add_argument(
+        "--status",
+        choices=["active", "archived", "draft", "all"],
+        default="active",
+        help="Lọc kết quả theo trạng thái hiệu lực ('active', 'archived', 'draft', 'all') (mặc định: 'active')",
+    )
+    parser.add_argument(
         "--interactive", "-i",
         action="store_true",
         help="Chế độ tìm kiếm tương tác (gõ câu hỏi liên tục không cần nạp lại mô hình)",
@@ -296,7 +324,7 @@ def main() -> None:
                         print("Tạm biệt!")
                         break
                     start = time.time()
-                    results = engine.hybrid_search(q, top_k=args.top_k, lang_filter=args.lang)
+                    results = engine.hybrid_search(q, top_k=args.top_k, lang_filter=args.lang, status_filter=args.status)
                     print(f"\n🔍 Kết quả tìm kiếm ({time.time() - start:.3f}s):")
                     display_results(results)
                 except KeyboardInterrupt:
@@ -304,9 +332,9 @@ def main() -> None:
                     break
         else:
             query = args.query or "Các Lĩnh vực Integrix Đồng hành bằng Giải pháp Thông minh"
-            print(f"🔍 Truy vấn Hybrid Search: \"{query}\" (RRF k={args.rrf_k}, Top-k={args.top_k})\n")
+            print(f"🔍 Truy vấn Hybrid Search: \"{query}\" (RRF k={args.rrf_k}, Top-k={args.top_k}, Status={args.status})\n")
             start = time.time()
-            results = engine.hybrid_search(query, top_k=args.top_k, lang_filter=args.lang)
+            results = engine.hybrid_search(query, top_k=args.top_k, lang_filter=args.lang, status_filter=args.status)
             print(f"[+] Thời gian tìm kiếm: {time.time() - start:.3f}s")
             display_results(results)
     finally:
